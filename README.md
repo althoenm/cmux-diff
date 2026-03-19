@@ -13,6 +13,47 @@ It is built for the common "what changed in my working tree?" workflow, not for 
 - creates a commit from staged changes
 - handles clean working trees with an explicit empty state
 
+## Install
+
+### Prerequisites
+
+- `git`
+- Rust stable with Cargo available on `PATH`
+
+### Install with Cargo
+
+```bash
+cargo install --locked --git https://github.com/althoenm/cmux-diff
+```
+
+This installs the `cmux-diff` binary globally through Cargo.
+
+Prebuilt binaries are not published yet.
+
+### Run from source instead
+
+```bash
+git clone https://github.com/althoenm/cmux-diff
+cd cmux-diff
+cargo run --quiet
+```
+
+## Quick Start
+
+### Run in the current repository
+
+```bash
+cmux-diff
+```
+
+### Run against a different repository
+
+```bash
+cmux-diff /path/to/repo
+```
+
+If the provided path is inside a Git repository, `cmux-diff` resolves the repository root automatically.
+
 ## What It Does Not Do
 
 `cmux-diff` is intentionally narrow in scope today. It does not currently include:
@@ -65,29 +106,6 @@ The current screen layout is:
 - `Enter`: create a commit from staged changes when focused in the commit input
 - `g`: create a commit from staged changes from the file list
 - `Esc`: leave the commit input and return focus to the file list
-
-## Getting Started
-
-### Prerequisites
-
-- Rust stable
-- `git` available on `PATH`
-
-The repository includes a `rust-toolchain.toml` pinned to stable, so a normal `rustup` setup is enough.
-
-### Run from the current repository
-
-```bash
-cargo run --quiet
-```
-
-### Run against a different repository
-
-```bash
-cargo run --quiet -- /path/to/repo
-```
-
-If the provided path is inside a Git repository, `cmux-diff` resolves the repository root automatically.
 
 ## How It Works
 
