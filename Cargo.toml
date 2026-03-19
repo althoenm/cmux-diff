@@ -1,0 +1,16 @@
+[package]
+name = "cmux-diff"
+version = "0.1.0"
+edition = "2024"
+description = "A terminal UI for reviewing local uncommitted Git changes"
+repository = "https://github.com/althoenm/cmux-diff"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0.102"
+ratatui = { version = "0.30.0", default-features = false, features = ["termion"] }
+termion = "4.0.6"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+tempfile = "3.23.0"
