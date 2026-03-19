@@ -70,6 +70,18 @@ fn app_state_shows_local_changes() -> Result<()> {
     assert_eq!(app.section_count(ChangeSection::Staged), 0);
     assert_eq!(app.section_count(ChangeSection::Unstaged), 1);
     assert_eq!(app.section_count(ChangeSection::Untracked), 1);
+    let tracked = app
+        .changes
+        .iter()
+        .find(|entry| entry.path == "tracked.txt")
+        .expect("tracked file entry");
+    assert_eq!((tracked.additions, tracked.deletions), (1, 0));
+    let untracked = app
+        .changes
+        .iter()
+        .find(|entry| entry.path == "new.txt")
+        .expect("untracked file entry");
+    assert_eq!((untracked.additions, untracked.deletions), (1, 0));
     assert!(app.diff.body.contains("tracked.txt") || app.diff.body.contains("+world"));
     Ok(())
 }

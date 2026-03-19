@@ -1,34 +1,22 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::app::AppState;
-use crate::model::{ChangeSection, FocusArea, StatusLevel};
+use crate::diff::effective_diff_scroll;
+use crate::layout;
+use crate::model::{ChangeEntry, ChangeSection, FocusArea, StatusLevel};
 
 pub fn render(frame: &mut Frame<'_>, app: &AppState) {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(4),
-            Constraint::Min(10),
-            Constraint::Length(5),
-            Constraint::Length(3),
-        ])
-        .split(frame.area());
+    let areas = layout::compute(frame.area());
 
-    render_header(frame, app, vertical[0]);
-
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
-        .split(vertical[1]);
-
-    render_changes(frame, app, body[0]);
-    render_diff(frame, app, body[1]);
-    render_commit(frame, app, vertical[2]);
-    render_status(frame, app, vertical[3]);
+    render_header(frame, app, areas.header);
+    render_changes(frame, app, areas.changes);
+    render_diff(frame, app, areas.diff);
+    render_commit(frame, app, areas.commit);
+    render_status(frame, app, areas.status);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,10 +28,24 @@ enum DiffLineKind {
     Plain,
 }
 
-fn render_header(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
-    let staged = app.section_count(ChangeSection::Staged);
-    let unstaged = app.section_count(ChangeSection::Unstaged);
-    let untracked = app.section_count(ChangeSection::Untracked);
+fn render_header(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
+    let staged = app.total_section_count(ChangeSection::Staged);
+    let unstaged = app.total_section_count(ChangeSection::Unstaged);
+    let untracked = app.total_section_count(ChangeSection::Untracked);
+    let filter_value = if app.filter_query.is_empty() {
+        "off".to_string()
+    } else {
+        format!(
+            "{} ({}/{})",
+            app.filter_query,
+            app.changes.len(),
+            app.total_change_count()
+        )
+    };
+    let hunk_value = app
+        .current_hunk_position()
+        .map(|(index, total)| format!("{index}/{total}"))
+        .unwrap_or_else(|| "none".to_string());
     let text = Text::from(vec![
         Line::from(vec![
             Span::styled(
@@ -55,41 +57,65 @@ fn render_header(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
             Span::raw(app.repo_root.as_str()),
         ]),
         Line::from(vec![
-            Span::styled(
-                "Branch ",
-                Style::default()
-                    .fg(Color::Gray)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" {} ", app.branch),
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::LightMagenta)
-                    .add_modifier(Modifier::BOLD),
+            badge("branch", &app.branch, Color::LightMagenta, false),
+            Span::raw("  "),
+            badge(
+                "wrap",
+                if app.diff_wrap { "on" } else { "off" },
+                Color::LightBlue,
+                false,
             ),
             Span::raw(format!(
-                "  |  staged: {}  unstaged: {}  untracked: {}",
+                "  staged {}  unstaged {}  untracked {}",
                 staged, unstaged, untracked
             )),
+        ]),
+        Line::from(vec![
+            badge("focus", app.focus_label(), focus_color(app.focus), true),
+            Span::raw("  "),
+            badge(
+                "filter",
+                &filter_value,
+                Color::Yellow,
+                app.focus == FocusArea::FilterInput,
+            ),
+            Span::raw("  "),
+            badge(
+                "hunk",
+                &hunk_value,
+                Color::Cyan,
+                app.focus == FocusArea::DiffView,
+            ),
         ]),
     ]);
 
     frame.render_widget(
-        Paragraph::new(text).block(Block::default().title("cmux-diff").borders(Borders::ALL)),
+        Paragraph::new(text).block(
+            Block::default()
+                .title("cmux-diff")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(focus_color(app.focus))),
+        ),
         area,
     );
 }
 
-fn render_changes(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
+fn render_changes(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     let mut items = Vec::new();
     let mut selected_row = None;
     let mut row_index = 0usize;
+    let content_width = area.width.saturating_sub(6) as usize;
 
     for section in ChangeSection::ALL {
-        let count = app.section_count(section);
+        let visible = app.section_count(section);
+        let total = app.total_section_count(section);
+        let count_label = if app.is_filter_active() {
+            format!("{visible}/{total}")
+        } else {
+            total.to_string()
+        };
         items.push(ListItem::new(Line::from(vec![Span::styled(
-            format!("{} ({count})", section.title()),
+            format!("{} ({count_label})", section.title()),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -100,14 +126,11 @@ fn render_changes(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::
             if app.selected_entry_id.as_deref() == Some(entry.id().as_str()) {
                 selected_row = Some(row_index);
             }
-            items.push(ListItem::new(Line::from(vec![Span::raw(format!(
-                "  {}",
-                entry.display_path()
-            ))])));
+            items.push(ListItem::new(change_entry_line(entry, content_width)));
             row_index += 1;
         }
 
-        if count == 0 {
+        if visible == 0 {
             items.push(ListItem::new(Line::from(vec![Span::styled(
                 "  <none>",
                 Style::default().fg(Color::DarkGray),
@@ -119,7 +142,10 @@ fn render_changes(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::
     let mut state = ListState::default();
     state.select(selected_row);
     let highlight = if app.focus == FocusArea::FileList {
-        Style::default().bg(Color::Blue).fg(Color::Black)
+        Style::default()
+            .bg(Color::LightBlue)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().bg(Color::DarkGray)
     };
@@ -128,8 +154,15 @@ fn render_changes(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::
         List::new(items)
             .block(
                 Block::default()
-                    .title("Local Changes")
-                    .borders(Borders::ALL),
+                    .title(pane_title(
+                        "Local Changes",
+                        app.focus == FocusArea::FileList,
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(pane_border(
+                        app.focus == FocusArea::FileList,
+                        Color::LightBlue,
+                    )),
             )
             .highlight_style(highlight)
             .highlight_symbol("> "),
@@ -138,7 +171,7 @@ fn render_changes(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::
     );
 }
 
-fn render_diff(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
+fn render_diff(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     let content_width = area.width.saturating_sub(2) as usize;
     let content_height = area.height.saturating_sub(2) as usize;
     let scroll = effective_diff_scroll(
@@ -146,33 +179,36 @@ fn render_diff(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rec
         app.diff_scroll,
         content_width,
         content_height,
+        app.diff_wrap,
     );
-    let border_style = if app.focus == FocusArea::DiffView {
-        Style::default().fg(Color::Cyan)
+    let hunk_suffix = app
+        .current_hunk_position()
+        .map(|(index, total)| format!(" · hunk {index}/{total}"))
+        .unwrap_or_default();
+    let wrap_suffix = if app.diff_wrap {
+        " · wrap"
     } else {
-        Style::default()
+        " · nowrap"
     };
+
     frame.render_widget(
         Paragraph::new(styled_diff_text(&app.diff.body, content_width))
-            .wrap(Wrap { trim: false })
+            .wrap(Wrap {
+                trim: !app.diff_wrap,
+            })
             .scroll((scroll, 0))
             .block(
                 Block::default()
-                    .title(app.diff.title.clone())
+                    .title(format!("{}{}{}", app.diff.title, hunk_suffix, wrap_suffix))
                     .borders(Borders::ALL)
-                    .border_style(border_style),
+                    .border_style(pane_border(app.focus == FocusArea::DiffView, Color::Cyan)),
             ),
         area,
     );
 }
 
-fn render_commit(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
-    let border_style = if app.focus == FocusArea::CommitInput {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default()
-    };
-    let help = "c focus commit | Enter/g commit | Esc back to file list";
+fn render_commit(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
+    let help = "c focus commit | Enter/g commit | Tab next pane | Esc files";
     let text = Text::from(vec![
         Line::from(app.commit.message.as_str()),
         Line::from(Span::styled(help, Style::default().fg(Color::DarkGray))),
@@ -181,16 +217,22 @@ fn render_commit(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
         Paragraph::new(text)
             .block(
                 Block::default()
-                    .title("Commit Message")
+                    .title(pane_title(
+                        "Commit Message",
+                        app.focus == FocusArea::CommitInput,
+                    ))
                     .borders(Borders::ALL)
-                    .border_style(border_style),
+                    .border_style(pane_border(
+                        app.focus == FocusArea::CommitInput,
+                        Color::Green,
+                    )),
             )
             .wrap(Wrap { trim: false }),
         area,
     );
 }
 
-fn render_status(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
+fn render_status(frame: &mut Frame<'_>, app: &AppState, area: Rect) {
     let color = match app.status.level {
         StatusLevel::Info => Color::Gray,
         StatusLevel::Success => Color::Gray,
@@ -199,17 +241,20 @@ fn render_status(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
     let x_hint = match app.selected_entry().map(|entry| entry.section) {
         Some(ChangeSection::Staged) => "x rollback",
         Some(ChangeSection::Unstaged | ChangeSection::Untracked) => "x delete",
-        None => "x delete/rollback",
+        None => "x rollback/delete",
     };
     let help = match app.focus {
         FocusArea::FileList => format!(
-            "q quit  r refresh  s stage  u unstage  {}  tab next pane  j/k move files",
+            "j/k move  s stage  u unstage  {}  n/p hunks  o open  w wrap  / filter  tab next",
             x_hint
         ),
         FocusArea::DiffView => {
-            "q quit  r refresh  tab next pane  Esc files  j/k scroll diff".to_string()
+            "j/k scroll  n/p hunks  o open  w wrap  / filter  tab next  Esc files".to_string()
         }
-        FocusArea::CommitInput => "q quit  Enter commit  tab next pane  Esc files".to_string(),
+        FocusArea::CommitInput => "type message  Enter commit  tab filter  Esc files".to_string(),
+        FocusArea::FilterInput => {
+            "type filter  Backspace edit  Ctrl-U clear  Enter keep  tab files".to_string()
+        }
     };
     let text = Text::from(vec![
         Line::from(Span::styled(
@@ -224,33 +269,41 @@ fn render_status(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
     );
 }
 
-fn effective_diff_scroll(
-    body: &str,
-    requested: u16,
-    content_width: usize,
-    content_height: usize,
-) -> u16 {
-    if content_width == 0 || content_height == 0 {
-        return 0;
-    }
-
-    let wrapped_lines = wrapped_line_count(body, content_width);
-    let max_scroll = wrapped_lines.saturating_sub(content_height) as u16;
-    requested.min(max_scroll)
+fn badge(label: &str, value: &str, color: Color, active: bool) -> Span<'static> {
+    let background = if active { color } else { Color::DarkGray };
+    let foreground = if active { Color::Black } else { color };
+    Span::styled(
+        format!(" {label}: {value} "),
+        Style::default()
+            .fg(foreground)
+            .bg(background)
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
-fn wrapped_line_count(body: &str, content_width: usize) -> usize {
-    if content_width == 0 {
-        return 0;
+fn pane_title(title: &str, active: bool) -> String {
+    if active {
+        format!("{title} • active")
+    } else {
+        title.to_string()
     }
+}
 
-    let mut total = 0usize;
-    for line in body.lines() {
-        let width = line.chars().count().max(1);
-        total += width.div_ceil(content_width);
+fn pane_border(active: bool, color: Color) -> Style {
+    if active {
+        Style::default().fg(color)
+    } else {
+        Style::default().fg(Color::DarkGray)
     }
+}
 
-    total.max(1)
+fn focus_color(focus: FocusArea) -> Color {
+    match focus {
+        FocusArea::FileList => Color::LightBlue,
+        FocusArea::DiffView => Color::Cyan,
+        FocusArea::CommitInput => Color::Green,
+        FocusArea::FilterInput => Color::Yellow,
+    }
 }
 
 fn styled_diff_text(body: &str, content_width: usize) -> Text<'static> {
@@ -272,6 +325,64 @@ fn styled_diff_text(body: &str, content_width: usize) -> Text<'static> {
     }
 
     Text::from(lines)
+}
+
+fn change_entry_line(entry: &ChangeEntry, content_width: usize) -> Line<'static> {
+    let indent = "  ".repeat(entry.tree_depth().min(4) + 1);
+    let name = entry.file_name();
+    let mut parent = entry.parent_path().unwrap_or_default();
+    if let Some(original) = &entry.original_path {
+        if parent.is_empty() {
+            parent = format!("← {original}");
+        } else {
+            parent = format!("{parent}  ← {original}");
+        }
+    }
+
+    let stat_width = stats_width(entry);
+    let left_budget = content_width.saturating_sub(stat_width);
+    let min_gap = if stat_width > 0 { 1 } else { 0 };
+    let base_width = indent.chars().count() + name.chars().count();
+    let parent_budget = left_budget.saturating_sub(base_width + min_gap);
+    let parent = truncate_for_width(&parent, parent_budget);
+    let used_width = base_width
+        + if parent.is_empty() {
+            0
+        } else {
+            1 + parent.chars().count()
+        }
+        + min_gap;
+    let spacer = " ".repeat(content_width.saturating_sub(used_width + stat_width));
+
+    let mut spans = vec![
+        Span::raw(indent),
+        Span::styled(name, Style::default().add_modifier(Modifier::BOLD)),
+    ];
+    if !parent.is_empty() {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(parent, Style::default().fg(Color::DarkGray)));
+    }
+    if stat_width > 0 {
+        spans.push(Span::raw(" "));
+        spans.push(Span::raw(spacer));
+        if entry.additions > 0 {
+            spans.push(Span::styled(
+                format!("+{}", entry.additions),
+                Style::default().fg(Color::LightGreen),
+            ));
+        }
+        if entry.additions > 0 && entry.deletions > 0 {
+            spans.push(Span::raw(" "));
+        }
+        if entry.deletions > 0 {
+            spans.push(Span::styled(
+                format!("-{}", entry.deletions),
+                Style::default().fg(Color::LightRed),
+            ));
+        }
+    }
+
+    Line::from(spans)
 }
 
 fn classify_diff_line(line: &str) -> DiffLineKind {
@@ -324,9 +435,45 @@ fn pad_line_for_background(line: &str, content_width: usize) -> String {
     format!("{line:<width$}", width = content_width)
 }
 
+fn stats_width(entry: &ChangeEntry) -> usize {
+    match (entry.additions > 0, entry.deletions > 0) {
+        (false, false) => 0,
+        (true, false) => 1 + digit_count(entry.additions),
+        (false, true) => 1 + digit_count(entry.deletions),
+        (true, true) => 3 + digit_count(entry.additions) + digit_count(entry.deletions),
+    }
+}
+
+fn digit_count(value: usize) -> usize {
+    value.max(1).to_string().len()
+}
+
+fn truncate_for_width(value: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+
+    let width = value.chars().count();
+    if width <= max_width {
+        return value.to_string();
+    }
+
+    if max_width == 1 {
+        return "…".to_string();
+    }
+
+    let mut output = String::new();
+    for ch in value.chars().take(max_width - 1) {
+        output.push(ch);
+    }
+    output.push('…');
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ChangeSection;
 
     #[test]
     fn classifies_diff_metadata_before_add_remove_markers() {
@@ -362,15 +509,40 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_line_count_accounts_for_soft_wrapping() {
-        assert_eq!(wrapped_line_count("abcdef", 4), 2);
-        assert_eq!(wrapped_line_count("ab\ncdef", 4), 2);
+    fn active_pane_titles_are_labeled() {
+        assert_eq!(pane_title("Diff", true), "Diff • active");
+        assert_eq!(pane_title("Diff", false), "Diff");
     }
 
     #[test]
-    fn effective_diff_scroll_clamps_to_wrapped_content_height() {
-        let body = "abcdef\nabcdef\nabcdef";
-        assert_eq!(effective_diff_scroll(body, 99, 4, 3), 3);
-        assert_eq!(effective_diff_scroll(body, 1, 4, 3), 1);
+    fn change_rows_include_parent_path_and_diff_stats() {
+        let entry = ChangeEntry {
+            section: ChangeSection::Unstaged,
+            path: "src/deep/file.rs".to_string(),
+            original_path: None,
+            staged_status: None,
+            unstaged_status: Some('M'),
+            additions: 12,
+            deletions: 3,
+        };
+
+        let line = change_entry_line(&entry, 40);
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains("file.rs"));
+        assert!(rendered.contains("src/deep"));
+        assert!(rendered.contains("+12"));
+        assert!(rendered.contains("-3"));
+    }
+
+    #[test]
+    fn truncates_parent_paths_to_fit_available_width() {
+        assert_eq!(truncate_for_width("src/really/long/path", 8), "src/rea…");
+        assert_eq!(truncate_for_width("short", 8), "short");
+        assert_eq!(truncate_for_width("path", 1), "…");
     }
 }

@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use thiserror::Error;
 
+use crate::diff::parse_diff_hunks;
 use crate::model::{ChangeEntry, ChangeSection, DiffContent, StatusSnapshot};
 
 #[derive(Debug, Error)]
@@ -41,7 +42,12 @@ impl GitClient {
             .and_then(OsStr::to_str)
             .unwrap_or("repo")
             .to_string();
-        let (branch, entries) = parse_status_output(&output);
+        let (branch, mut entries) = parse_status_output(&output);
+        for entry in &mut entries {
+            let (additions, deletions) = self.diff_stats_for_entry(entry, has_commits)?;
+            entry.additions = additions;
+            entry.deletions = deletions;
+        }
 
         Ok(StatusSnapshot {
             repo_root: self.repo_root.clone(),
@@ -76,7 +82,8 @@ impl GitClient {
             }
         };
 
-        Ok(DiffContent { title, body })
+        let hunks = parse_diff_hunks(&body);
+        Ok(DiffContent { title, body, hunks })
     }
 
     pub fn stage_file(&self, path: &str) -> Result<()> {
@@ -144,6 +151,45 @@ impl GitClient {
         let output =
             command_output_with_retry(&mut command, "failed to check whether HEAD exists")?;
         Ok(output.status.success())
+    }
+
+    fn diff_stats_for_entry(
+        &self,
+        entry: &ChangeEntry,
+        has_commits: bool,
+    ) -> Result<(usize, usize)> {
+        let output = match entry.section {
+            ChangeSection::Staged => {
+                if has_commits {
+                    self.run(["diff", "--cached", "--numstat", "--", entry.path.as_str()])?
+                } else {
+                    self.run([
+                        "diff",
+                        "--cached",
+                        "--root",
+                        "--numstat",
+                        "--",
+                        entry.path.as_str(),
+                    ])?
+                }
+            }
+            ChangeSection::Unstaged => {
+                self.run(["diff", "--numstat", "--", entry.path.as_str()])?
+            }
+            ChangeSection::Untracked => self.run_allow_exit(
+                [
+                    "diff",
+                    "--no-index",
+                    "--numstat",
+                    "--",
+                    "/dev/null",
+                    entry.path.as_str(),
+                ],
+                &[0, 1],
+            )?,
+        };
+
+        Ok(parse_numstat_output(&output))
     }
 
     fn run<I, S>(&self, args: I) -> Result<String>
@@ -250,6 +296,8 @@ fn parse_status_output(output: &str) -> (String, Vec<ChangeEntry>) {
                 original_path: None,
                 staged_status: None,
                 unstaged_status: None,
+                additions: 0,
+                deletions: 0,
             });
             continue;
         }
@@ -317,6 +365,8 @@ fn status_entries_from_xy(
             original_path: original_path.clone(),
             staged_status: Some(staged),
             unstaged_status: None,
+            additions: 0,
+            deletions: 0,
         });
     }
 
@@ -327,10 +377,35 @@ fn status_entries_from_xy(
             original_path,
             staged_status: None,
             unstaged_status: Some(unstaged),
+            additions: 0,
+            deletions: 0,
         });
     }
 
     entries
+}
+
+fn parse_numstat_output(output: &str) -> (usize, usize) {
+    output
+        .lines()
+        .find_map(parse_numstat_line)
+        .unwrap_or((0, 0))
+}
+
+fn parse_numstat_line(line: &str) -> Option<(usize, usize)> {
+    let mut parts = line.splitn(3, '\t');
+    let additions = parts.next()?;
+    let deletions = parts.next()?;
+    parts.next()?;
+
+    Some((
+        parse_numstat_value(additions),
+        parse_numstat_value(deletions),
+    ))
+}
+
+fn parse_numstat_value(value: &str) -> usize {
+    value.parse::<usize>().unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -371,5 +446,12 @@ mod tests {
         assert_eq!(entries[0].section, ChangeSection::Staged);
         assert_eq!(entries[0].path, "src/new.rs");
         assert_eq!(entries[0].original_path.as_deref(), Some("src/old.rs"));
+    }
+
+    #[test]
+    fn parses_numstat_output_for_text_and_binary_changes() {
+        assert_eq!(parse_numstat_output("12\t3\tsrc/app.rs\n"), (12, 3));
+        assert_eq!(parse_numstat_output("-\t-\tassets/logo.png\n"), (0, 0));
+        assert_eq!(parse_numstat_output(""), (0, 0));
     }
 }

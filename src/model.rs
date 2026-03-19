@@ -1,5 +1,5 @@
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ChangeSection {
@@ -27,6 +27,8 @@ pub struct ChangeEntry {
     pub original_path: Option<String>,
     pub staged_status: Option<char>,
     pub unstaged_status: Option<char>,
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 impl ChangeEntry {
@@ -39,6 +41,30 @@ impl ChangeEntry {
             Some(original) => format!("{original} -> {}", self.path),
             None => self.path.clone(),
         }
+    }
+
+    pub fn file_name(&self) -> String {
+        Path::new(&self.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(self.path.as_str())
+            .to_string()
+    }
+
+    pub fn parent_path(&self) -> Option<String> {
+        let parent = Path::new(&self.path)
+            .parent()
+            .and_then(|path| path.to_str())
+            .unwrap_or("");
+        if parent.is_empty() {
+            None
+        } else {
+            Some(parent.to_string())
+        }
+    }
+
+    pub fn tree_depth(&self) -> usize {
+        Path::new(&self.path).components().count().saturating_sub(1)
     }
 }
 
@@ -55,6 +81,7 @@ pub struct StatusSnapshot {
 pub struct DiffContent {
     pub title: String,
     pub body: String,
+    pub hunks: Vec<DiffHunk>,
 }
 
 impl DiffContent {
@@ -62,8 +89,15 @@ impl DiffContent {
         Self {
             title: "Diff".to_string(),
             body: message.into(),
+            hunks: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiffHunk {
+    pub line_index: usize,
+    pub new_start: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,6 +105,7 @@ pub enum FocusArea {
     FileList,
     DiffView,
     CommitInput,
+    FilterInput,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
