@@ -22,6 +22,7 @@ pub struct AppState {
     pub changes: Vec<ChangeEntry>,
     pub selected_entry_id: Option<String>,
     pub diff: DiffContent,
+    pub diff_scroll: u16,
     pub focus: FocusArea,
     pub commit: CommitState,
     pub status: StatusMessage,
@@ -39,6 +40,7 @@ impl AppState {
             changes: Vec::new(),
             selected_entry_id: None,
             diff: DiffContent::empty("Loading diff…"),
+            diff_scroll: 0,
             focus: FocusArea::FileList,
             commit: CommitState::default(),
             status: StatusMessage::info("Ready."),
@@ -90,7 +92,8 @@ impl AppState {
 
     pub fn toggle_focus(&mut self) {
         self.focus = match self.focus {
-            FocusArea::FileList => FocusArea::CommitInput,
+            FocusArea::FileList => FocusArea::DiffView,
+            FocusArea::DiffView => FocusArea::CommitInput,
             FocusArea::CommitInput => FocusArea::FileList,
         };
     }
@@ -102,6 +105,10 @@ impl AppState {
     pub fn focus_file_list(&mut self) {
         self.focus = FocusArea::FileList;
         self.status = StatusMessage::info(self.selection_status_text());
+    }
+
+    pub fn scroll_diff(&mut self, delta: i16) {
+        self.diff_scroll = self.diff_scroll.saturating_add_signed(delta);
     }
 
     pub fn stage_selected(&mut self) -> Result<()> {
@@ -230,6 +237,7 @@ impl AppState {
     }
 
     fn reload_selected_diff(&mut self) -> Result<()> {
+        self.diff_scroll = 0;
         self.diff = if let Some(entry) = self.selected_entry().cloned() {
             self.git.diff_for_entry(&entry, self.has_commits)?
         } else {

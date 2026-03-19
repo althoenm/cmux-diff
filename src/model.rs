@@ -69,6 +69,7 @@ impl DiffContent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FocusArea {
     FileList,
+    DiffView,
     CommitInput,
 }
 

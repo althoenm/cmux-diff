@@ -140,12 +140,28 @@ fn render_changes(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::
 
 fn render_diff(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
     let content_width = area.width.saturating_sub(2) as usize;
+    let content_height = area.height.saturating_sub(2) as usize;
+    let scroll = effective_diff_scroll(
+        &app.diff.body,
+        app.diff_scroll,
+        content_width,
+        content_height,
+    );
+    let border_style = if app.focus == FocusArea::DiffView {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default()
+    };
     frame.render_widget(
-        Paragraph::new(styled_diff_text(&app.diff.body, content_width)).block(
-            Block::default()
-                .title(app.diff.title.clone())
-                .borders(Borders::ALL),
-        ),
+        Paragraph::new(styled_diff_text(&app.diff.body, content_width))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0))
+            .block(
+                Block::default()
+                    .title(app.diff.title.clone())
+                    .borders(Borders::ALL)
+                    .border_style(border_style),
+            ),
         area,
     );
 }
@@ -185,10 +201,16 @@ fn render_status(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
         Some(ChangeSection::Unstaged | ChangeSection::Untracked) => "x delete",
         None => "x delete/rollback",
     };
-    let help = format!(
-        "q quit  r refresh  s stage  u unstage  {}  tab focus  j/k move",
-        x_hint
-    );
+    let help = match app.focus {
+        FocusArea::FileList => format!(
+            "q quit  r refresh  s stage  u unstage  {}  tab next pane  j/k move files",
+            x_hint
+        ),
+        FocusArea::DiffView => {
+            "q quit  r refresh  tab next pane  Esc files  j/k scroll diff".to_string()
+        }
+        FocusArea::CommitInput => "q quit  Enter commit  tab next pane  Esc files".to_string(),
+    };
     let text = Text::from(vec![
         Line::from(Span::styled(
             app.status.text.as_str(),
@@ -200,6 +222,35 @@ fn render_status(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
         Paragraph::new(text).block(Block::default().borders(Borders::TOP)),
         area,
     );
+}
+
+fn effective_diff_scroll(
+    body: &str,
+    requested: u16,
+    content_width: usize,
+    content_height: usize,
+) -> u16 {
+    if content_width == 0 || content_height == 0 {
+        return 0;
+    }
+
+    let wrapped_lines = wrapped_line_count(body, content_width);
+    let max_scroll = wrapped_lines.saturating_sub(content_height) as u16;
+    requested.min(max_scroll)
+}
+
+fn wrapped_line_count(body: &str, content_width: usize) -> usize {
+    if content_width == 0 {
+        return 0;
+    }
+
+    let mut total = 0usize;
+    for line in body.lines() {
+        let width = line.chars().count().max(1);
+        total += width.div_ceil(content_width);
+    }
+
+    total.max(1)
 }
 
 fn styled_diff_text(body: &str, content_width: usize) -> Text<'static> {
@@ -308,5 +359,18 @@ mod tests {
             text.lines[1].spans[0].style.bg,
             Some(Color::Rgb(96, 34, 40))
         );
+    }
+
+    #[test]
+    fn wrapped_line_count_accounts_for_soft_wrapping() {
+        assert_eq!(wrapped_line_count("abcdef", 4), 2);
+        assert_eq!(wrapped_line_count("ab\ncdef", 4), 2);
+    }
+
+    #[test]
+    fn effective_diff_scroll_clamps_to_wrapped_content_height() {
+        let body = "abcdef\nabcdef\nabcdef";
+        assert_eq!(effective_diff_scroll(body, 99, 4, 3), 3);
+        assert_eq!(effective_diff_scroll(body, 1, 4, 3), 1);
     }
 }

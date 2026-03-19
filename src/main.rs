@@ -83,6 +83,25 @@ fn handle_key(key: Key, app: &mut AppState) -> Result<bool> {
             }
             _ => {}
         },
+        FocusArea::DiffView => match key {
+            Key::Char('q') => return Ok(true),
+            Key::Char('j') | Key::Down => {
+                app.scroll_diff(1);
+            }
+            Key::Char('k') | Key::Up => {
+                app.scroll_diff(-1);
+            }
+            Key::Char('r') => {
+                app.refresh(None)?;
+            }
+            Key::Char('\t') => {
+                app.toggle_focus();
+            }
+            Key::Esc => {
+                app.focus_file_list();
+            }
+            _ => {}
+        },
         FocusArea::CommitInput => match key {
             Key::Char('q') => return Ok(true),
             Key::Esc => {
