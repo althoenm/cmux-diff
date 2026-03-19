@@ -69,6 +69,9 @@ fn handle_key(key: Key, app: &mut AppState) -> Result<bool> {
             Key::Char('u') => {
                 app.unstage_selected()?;
             }
+            Key::Char('x') => {
+                app.discard_selected()?;
+            }
             Key::Char('c') => {
                 app.focus_commit();
             }

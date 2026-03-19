@@ -11,10 +11,10 @@ pub fn render(frame: &mut Frame<'_>, app: &AppState) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Min(10),
             Constraint::Length(5),
-            Constraint::Length(2),
+            Constraint::Length(3),
         ])
         .split(frame.area());
 
@@ -54,10 +54,25 @@ fn render_header(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
             ),
             Span::raw(app.repo_root.as_str()),
         ]),
-        Line::from(format!(
-            "Branch: {}  |  staged: {}  unstaged: {}  untracked: {}",
-            app.branch, staged, unstaged, untracked
-        )),
+        Line::from(vec![
+            Span::styled(
+                "Branch ",
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" {} ", app.branch),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::LightMagenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(
+                "  |  staged: {}  unstaged: {}  untracked: {}",
+                staged, unstaged, untracked
+            )),
+        ]),
     ]);
 
     frame.render_widget(
@@ -162,17 +177,27 @@ fn render_commit(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
 fn render_status(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
     let color = match app.status.level {
         StatusLevel::Info => Color::Gray,
-        StatusLevel::Success => Color::Green,
+        StatusLevel::Success => Color::Gray,
         StatusLevel::Error => Color::Red,
     };
-    let text = format!(
-        "{}  |  q quit  r refresh  s stage  u unstage  tab focus  j/k move",
-        app.status.text
+    let x_hint = match app.selected_entry().map(|entry| entry.section) {
+        Some(ChangeSection::Staged) => "x rollback",
+        Some(ChangeSection::Unstaged | ChangeSection::Untracked) => "x delete",
+        None => "x delete/rollback",
+    };
+    let help = format!(
+        "q quit  r refresh  s stage  u unstage  {}  tab focus  j/k move",
+        x_hint
     );
+    let text = Text::from(vec![
+        Line::from(Span::styled(
+            app.status.text.as_str(),
+            Style::default().fg(color),
+        )),
+        Line::from(Span::styled(help, Style::default().fg(Color::DarkGray))),
+    ]);
     frame.render_widget(
-        Paragraph::new(text)
-            .style(Style::default().fg(color))
-            .block(Block::default().borders(Borders::TOP)),
+        Paragraph::new(text).block(Block::default().borders(Borders::TOP)),
         area,
     );
 }

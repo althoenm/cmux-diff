@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
@@ -88,6 +89,51 @@ impl GitClient {
 
     pub fn commit(&self, message: &str) -> Result<()> {
         self.run(["commit", "-m", message]).map(|_| ())
+    }
+
+    pub fn discard_file(&self, entry: &ChangeEntry, has_commits: bool) -> Result<()> {
+        match entry.section {
+            ChangeSection::Staged => {
+                if has_commits {
+                    self.run([
+                        "restore",
+                        "--source=HEAD",
+                        "--staged",
+                        "--worktree",
+                        "--",
+                        entry.path.as_str(),
+                    ])
+                    .map(|_| ())
+                } else {
+                    self.run(["rm", "-f", "--cached", "--", entry.path.as_str()])
+                        .map(|_| ())?;
+                    self.run_allow_exit(["clean", "-f", "-d", "--", entry.path.as_str()], &[0, 1])
+                        .map(|_| ())
+                }
+            }
+            ChangeSection::Unstaged | ChangeSection::Untracked => {
+                self.delete_worktree_path(&entry.path)
+            }
+        }
+    }
+
+    fn delete_worktree_path(&self, path: &str) -> Result<()> {
+        let full_path = self.repo_root.join(path);
+        match fs::symlink_metadata(&full_path) {
+            Ok(metadata) => {
+                if metadata.is_dir() {
+                    fs::remove_dir_all(&full_path)
+                        .with_context(|| format!("failed to delete {}", full_path.display()))
+                } else {
+                    fs::remove_file(&full_path)
+                        .with_context(|| format!("failed to delete {}", full_path.display()))
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to access {}", full_path.display()))
+            }
+        }
     }
 
     fn has_commits(&self) -> Result<bool> {

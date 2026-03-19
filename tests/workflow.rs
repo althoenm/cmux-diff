@@ -161,6 +161,95 @@ fn stage_selected_handles_untracked_files() -> Result<()> {
 
 #[test]
 #[serial]
+fn discard_selected_deletes_unstaged_files_from_worktree() -> Result<()> {
+    let repo = init_repo()?;
+    fs::write(repo.path().join("tracked.txt"), "hello\n")?;
+    git(repo.path(), ["add", "--", "tracked.txt"])?;
+    git(repo.path(), ["commit", "-m", "initial"])?;
+    fs::write(repo.path().join("tracked.txt"), "hello\nworld\n")?;
+
+    let mut app = AppState::new(repo.path())?;
+    app.discard_selected()?;
+
+    assert_eq!(app.section_count(ChangeSection::Staged), 0);
+    assert_eq!(app.section_count(ChangeSection::Unstaged), 1);
+    assert_eq!(app.section_count(ChangeSection::Untracked), 0);
+    assert!(!repo.path().join("tracked.txt").exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn discard_selected_rolls_back_staged_changes() -> Result<()> {
+    let repo = init_repo()?;
+    fs::write(repo.path().join("tracked.txt"), "hello\n")?;
+    git(repo.path(), ["add", "--", "tracked.txt"])?;
+    git(repo.path(), ["commit", "-m", "initial"])?;
+    fs::write(repo.path().join("tracked.txt"), "hello\nworld\n")?;
+
+    let mut app = AppState::new(repo.path())?;
+    app.stage_selected()?;
+    assert_eq!(app.section_count(ChangeSection::Staged), 1);
+
+    app.discard_selected()?;
+
+    assert_eq!(app.section_count(ChangeSection::Staged), 0);
+    assert_eq!(app.section_count(ChangeSection::Unstaged), 0);
+    assert_eq!(app.section_count(ChangeSection::Untracked), 0);
+    assert_eq!(
+        fs::read_to_string(repo.path().join("tracked.txt"))?,
+        "hello\n"
+    );
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn discard_selected_deletes_untracked_files() -> Result<()> {
+    let repo = init_repo()?;
+    fs::write(repo.path().join("tracked.txt"), "hello\n")?;
+    git(repo.path(), ["add", "--", "tracked.txt"])?;
+    git(repo.path(), ["commit", "-m", "initial"])?;
+    fs::write(repo.path().join("new.txt"), "brand new\n")?;
+
+    let mut app = AppState::new(repo.path())?;
+    while app.selected_entry().map(|entry| entry.section) != Some(ChangeSection::Untracked) {
+        app.move_selection(1)?;
+    }
+
+    app.discard_selected()?;
+
+    assert_eq!(app.section_count(ChangeSection::Untracked), 0);
+    assert!(!repo.path().join("new.txt").exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn discard_selected_removes_staged_new_files() -> Result<()> {
+    let repo = init_repo()?;
+    fs::write(repo.path().join("tracked.txt"), "hello\n")?;
+    git(repo.path(), ["add", "--", "tracked.txt"])?;
+    git(repo.path(), ["commit", "-m", "initial"])?;
+    fs::write(repo.path().join("new.txt"), "brand new\n")?;
+
+    let mut app = AppState::new(repo.path())?;
+    while app.selected_entry().map(|entry| entry.section) != Some(ChangeSection::Untracked) {
+        app.move_selection(1)?;
+    }
+    app.stage_selected()?;
+    assert_eq!(app.section_count(ChangeSection::Staged), 1);
+
+    app.discard_selected()?;
+
+    assert_eq!(app.section_count(ChangeSection::Staged), 0);
+    assert_eq!(app.section_count(ChangeSection::Untracked), 0);
+    assert!(!repo.path().join("new.txt").exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
 fn commit_requires_message() -> Result<()> {
     let repo = init_repo()?;
     fs::write(repo.path().join("tracked.txt"), "hello\n")?;

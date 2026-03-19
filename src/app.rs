@@ -84,6 +84,7 @@ impl AppState {
             .saturating_add_signed(delta)
             .min(self.changes.len() - 1);
         self.selected_entry_id = Some(self.changes[next_index].id());
+        self.status = StatusMessage::info(self.selection_status_text());
         self.reload_selected_diff()
     }
 
@@ -100,6 +101,7 @@ impl AppState {
 
     pub fn focus_file_list(&mut self) {
         self.focus = FocusArea::FileList;
+        self.status = StatusMessage::info(self.selection_status_text());
     }
 
     pub fn stage_selected(&mut self) -> Result<()> {
@@ -155,12 +157,37 @@ impl AppState {
         Ok(())
     }
 
+    pub fn discard_selected(&mut self) -> Result<()> {
+        let Some(entry) = self.selected_entry().cloned() else {
+            return Ok(());
+        };
+
+        self.git.discard_file(&entry, self.has_commits)?;
+        self.apply_post_action_refresh(None)?;
+        self.status = StatusMessage::success(match entry.section {
+            ChangeSection::Staged => format!("Rolled back {} to HEAD.", entry.display_path()),
+            ChangeSection::Unstaged | ChangeSection::Untracked => {
+                format!("Deleted {} from the working tree.", entry.display_path())
+            }
+        });
+        Ok(())
+    }
+
     pub fn push_commit_char(&mut self, ch: char) {
         self.commit.message.push(ch);
     }
 
     pub fn backspace_commit(&mut self) {
         self.commit.message.pop();
+    }
+
+    fn selection_status_text(&self) -> String {
+        match self.selected_entry().map(|entry| entry.section) {
+            Some(ChangeSection::Staged) => "Staged file selected.".to_string(),
+            Some(ChangeSection::Unstaged) => "Unstaged file selected.".to_string(),
+            Some(ChangeSection::Untracked) => "Untracked file selected.".to_string(),
+            None => "Working tree is clean.".to_string(),
+        }
     }
 
     fn apply_post_action_refresh(
