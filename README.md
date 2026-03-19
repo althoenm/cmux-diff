@@ -135,6 +135,12 @@ cargo fmt
 cargo check
 ```
 
+## License
+
+This project is licensed under Apache License 2.0.
+
+See `LICENSE` for the full text.
+
 ## Security Notes
 
 This repo is intentionally conservative:

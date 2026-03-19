@@ -5,6 +5,7 @@ edition = "2024"
 description = "A terminal UI for reviewing local uncommitted Git changes"
 repository = "https://github.com/althoenm/cmux-diff"
 readme = "README.md"
+license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1.0.102"
