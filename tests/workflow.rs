@@ -5,6 +5,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use cmux_diff::app::AppState;
 use cmux_diff::model::{ChangeSection, StatusLevel};
+use serial_test::serial;
 use tempfile::TempDir;
 
 fn init_repo() -> Result<TempDir> {
@@ -35,6 +36,7 @@ where
 }
 
 #[test]
+#[serial]
 fn app_state_shows_local_changes() -> Result<()> {
     let repo = init_repo()?;
     fs::write(repo.path().join("tracked.txt"), "hello\n")?;
@@ -53,6 +55,7 @@ fn app_state_shows_local_changes() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn stage_and_unstage_updates_sections() -> Result<()> {
     let repo = init_repo()?;
     fs::write(repo.path().join("tracked.txt"), "hello\n")?;
@@ -74,6 +77,7 @@ fn stage_and_unstage_updates_sections() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn commit_clears_staged_changes() -> Result<()> {
     let repo = init_repo()?;
     fs::write(repo.path().join("tracked.txt"), "hello\n")?;
@@ -94,6 +98,7 @@ fn commit_clears_staged_changes() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn clean_repo_shows_empty_state() -> Result<()> {
     let repo = init_repo()?;
     fs::write(repo.path().join("tracked.txt"), "hello\n")?;
@@ -110,6 +115,7 @@ fn clean_repo_shows_empty_state() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn stage_selected_handles_untracked_files() -> Result<()> {
     let repo = init_repo()?;
     fs::write(repo.path().join("tracked.txt"), "hello\n")?;
@@ -134,6 +140,7 @@ fn stage_selected_handles_untracked_files() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn commit_requires_message() -> Result<()> {
     let repo = init_repo()?;
     fs::write(repo.path().join("tracked.txt"), "hello\n")?;
@@ -153,6 +160,7 @@ fn commit_requires_message() -> Result<()> {
 }
 
 #[test]
+#[serial]
 fn commit_requires_staged_changes() -> Result<()> {
     let repo = init_repo()?;
     fs::write(repo.path().join("tracked.txt"), "hello\n")?;
