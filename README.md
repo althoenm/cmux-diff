@@ -1,74 +1,51 @@
 # cmux-diff
 
-`cmux-diff` is a terminal UI for the narrow workflow of reviewing **local uncommitted Git changes**.
+`cmux-diff` is a terminal UI for reviewing local, uncommitted Git changes.
 
-The default view answers one question quickly:
+It is built for the common "what changed in my working tree?" workflow, not for broad repository management. The default view stays focused on `HEAD` versus your current local state instead of showing every file changed across a branch or pull request.
 
-> What is dirty in my working tree right now compared to `HEAD`?
+## What It Does
 
-This is intentionally smaller than a full Git client. It does **not** try to show every file changed on a branch by default, and it does **not** include GitHub or pull-request features in v1.
+- shows `Staged`, `Unstaged`, and `Untracked` files
+- renders a unified diff for the selected file
+- highlights added and removed lines inline
+- stages and unstages files
+- creates a commit from staged changes
+- handles clean working trees with an explicit empty state
 
-## Current Status
+## What It Does Not Do
 
-This repository is an early working prototype.
+`cmux-diff` is intentionally narrow in scope today. It does not currently include:
 
-Implemented:
-
-- `Staged`, `Unstaged`, and `Untracked` sections
-- per-file diff view
-- file-level stage / unstage
-- commit message input and commit creation
-- clean working-tree empty state
-- test coverage for the main local-change workflows
-
-Not implemented yet:
-
-- branch review mode
+- branch-wide review mode
+- pull request or GitHub integration
 - hunk-level staging
-- discard/reset actions
+- discard or reset actions
 - stash workflows
-- PR / GitHub integration
 - side-by-side diff rendering
+- commit graph browsing or remote management
 
-## Why This Exists
+## Why This Tool Exists
 
-Most terminal Git tools optimize for being broad. This project optimizes for one daily workflow:
+Many terminal Git tools are optimized to do everything. `cmux-diff` is optimized to make one workflow fast:
 
-1. open a repo
-2. see only local changes
-3. inspect a diff
+1. open a repository
+2. see only what is locally dirty
+3. inspect the diff
 4. stage or unstage a file
-5. write a commit
+5. write the commit
 
-That means the default mode deliberately avoids mixing in branch-wide review state.
+That focus keeps the UI small and avoids mixing local working-tree inspection with branch review or hosting-provider concerns.
 
-## Features
+## Interface
 
-### Local Changes View
+The current screen layout is:
 
-The main screen is split into:
-
-- header with repo root, branch, and summary counts
-- left pane with `Staged`, `Unstaged`, and `Untracked` files
-- right pane with the diff for the selected file
-- commit footer for entering a commit message
-
-### Git Operations
-
-`cmux-diff` shells out to the system `git` binary for all repository operations.
-
-Current commands used by the app include:
-
-- `git status --porcelain=v2 --branch`
-- `git diff -- <path>`
-- `git diff --cached -- <path>`
-- `git diff --cached --root -- <path>`
-- `git diff --no-index -- /dev/null <path>`
-- `git add -- <path>`
-- `git restore --staged -- <path>`
-- `git commit -m <message>`
-
-No credentials or GitHub tokens are read by the app.
+- a header with repository, path, branch, and summary counts
+- a left pane with `Staged`, `Unstaged`, and `Untracked` sections
+- a right pane with the selected file's unified diff
+- a commit input footer
+- a status bar with the current action and key hints
 
 ## Keybindings
 
@@ -89,35 +66,50 @@ No credentials or GitHub tokens are read by the app.
 - `g`: create a commit from staged changes from the file list
 - `Esc`: leave the commit input and return focus to the file list
 
-## Running Locally
+## Getting Started
 
 ### Prerequisites
 
 - Rust stable
-- `git` installed and available on `PATH`
+- `git` available on `PATH`
 
-The repo includes a `rust-toolchain.toml` pinned to stable, so a standard `rustup` setup is enough.
+The repository includes a `rust-toolchain.toml` pinned to stable, so a normal `rustup` setup is enough.
 
-### Start the app
+### Run from the current repository
 
 ```bash
 cargo run --quiet
 ```
 
-To inspect a different repo:
+### Run against a different repository
 
 ```bash
 cargo run --quiet -- /path/to/repo
 ```
 
-If the provided path is inside a Git repo, `cmux-diff` resolves the repo root automatically.
+If the provided path is inside a Git repository, `cmux-diff` resolves the repository root automatically.
+
+## How It Works
+
+`cmux-diff` shells out to the system `git` binary for repository operations. The current implementation uses commands such as:
+
+- `git status --porcelain=v2 --branch`
+- `git diff -- <path>`
+- `git diff --cached -- <path>`
+- `git diff --cached --root -- <path>`
+- `git diff --no-index -- /dev/null <path>`
+- `git add -- <path>`
+- `git restore --staged -- <path>`
+- `git commit -m <message>`
+
+The application does not require GitHub credentials and does not call remote APIs.
 
 ## Development
 
-### Layout
+### Project layout
 
-- `src/git.rs`: subprocess-backed Git adapter and `git status` parser
-- `src/app.rs`: app state, selection logic, stage / unstage / commit actions
+- `src/git.rs`: subprocess-backed Git adapter and status parsing
+- `src/app.rs`: application state and stage, unstage, and commit actions
 - `src/ui.rs`: ratatui rendering
 - `src/model.rs`: shared UI and domain types
 - `tests/workflow.rs`: temp-repo integration tests
@@ -128,58 +120,35 @@ If the provided path is inside a Git repo, `cmux-diff` resolves the repo root au
 cargo test
 ```
 
-### Lint / format
+### Format and check
 
 ```bash
 cargo fmt
 cargo check
 ```
 
-## License
+## Security
 
-This project is licensed under Apache License 2.0.
+The current design is intentionally conservative:
 
-See `LICENSE` for the full text.
+- the application operates on local repositories only
+- Git commands are executed with `std::process::Command`, not shell interpolation
+- file paths are passed as command arguments instead of being embedded in shell strings
+- no tokens, API keys, or service credentials are required for the current feature set
 
-## Security Notes
+The main trust boundary is the local `git` executable and the target repository contents. Future features such as discard actions, hunk editing, or remote-provider integration should be treated as higher-risk areas and designed accordingly.
 
-This repo is intentionally conservative:
-
-- the app does not embed tokens, API keys, or service credentials
-- Git commands are executed via `std::process::Command`, not shell interpolation
-- file paths are passed as git arguments, which avoids shell-command injection
-- the current app only works with the local filesystem and local Git repositories
-
-Current review findings:
-
-- no obvious secrets were found in the tracked source tree
-- no network operations are performed by the application itself
-- the main trust boundary is the local `git` executable and the target repository contents
-
-Things to keep in mind for future work:
-
-- if branch review or GitHub integration is added later, credentials must stay outside the repo and outside logs
-- if discard/reset actions are added, they should require clear UX confirmation
-- if hunk editing is added, diff parsing and patch application should be treated as a higher-risk area
-
-## Non-Goals For v1
-
-This project is not trying to replace a full Git desktop client yet.
-
-Out of scope for the current version:
-
-- commit graph browsing
-- PR review comments
-- issue tracking
-- merge/rebase workflows
-- remote repository management
-- multi-repo dashboards
+If you discover a security issue, avoid posting exploit details in a public issue.
 
 ## Roadmap
 
 Planned next steps:
 
-1. improve the diff viewer behavior and scrolling
-2. add a separate `Branch Review` mode without changing the default `Local Changes` view
-3. add safer file actions such as discard/reset with confirmation
-4. improve test coverage for selection behavior and more complex repository states
+1. improve diff scrolling and viewing ergonomics
+2. add a separate branch review mode without changing the default local-changes workflow
+3. add safer destructive actions with explicit confirmation
+4. expand coverage for more complex repository states
+
+## License
+
+This project is licensed under Apache License 2.0. See `LICENSE` for the full text.

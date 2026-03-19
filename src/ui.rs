@@ -31,6 +31,15 @@ pub fn render(frame: &mut Frame<'_>, app: &AppState) {
     render_status(frame, app, vertical[3]);
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiffLineKind {
+    Header,
+    Hunk,
+    Added,
+    Removed,
+    Plain,
+}
+
 fn render_header(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
     let staged = app.section_count(ChangeSection::Staged);
     let unstaged = app.section_count(ChangeSection::Unstaged);
@@ -115,14 +124,13 @@ fn render_changes(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::
 }
 
 fn render_diff(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::Rect) {
+    let content_width = area.width.saturating_sub(2) as usize;
     frame.render_widget(
-        Paragraph::new(app.diff.body.clone())
-            .wrap(Wrap { trim: false })
-            .block(
-                Block::default()
-                    .title(app.diff.title.clone())
-                    .borders(Borders::ALL),
-            ),
+        Paragraph::new(styled_diff_text(&app.diff.body, content_width)).block(
+            Block::default()
+                .title(app.diff.title.clone())
+                .borders(Borders::ALL),
+        ),
         area,
     );
 }
@@ -167,4 +175,113 @@ fn render_status(frame: &mut Frame<'_>, app: &AppState, area: ratatui::layout::R
             .block(Block::default().borders(Borders::TOP)),
         area,
     );
+}
+
+fn styled_diff_text(body: &str, content_width: usize) -> Text<'static> {
+    let mut lines = Vec::new();
+
+    for raw_line in body.lines() {
+        let kind = classify_diff_line(raw_line);
+        let style = diff_line_style(kind);
+        let rendered_line = if matches!(kind, DiffLineKind::Added | DiffLineKind::Removed) {
+            pad_line_for_background(raw_line, content_width)
+        } else {
+            raw_line.to_string()
+        };
+        lines.push(Line::from(Span::styled(rendered_line, style)));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+
+    Text::from(lines)
+}
+
+fn classify_diff_line(line: &str) -> DiffLineKind {
+    if line.starts_with("diff --git ")
+        || line.starts_with("index ")
+        || line.starts_with("new file mode ")
+        || line.starts_with("deleted file mode ")
+        || line.starts_with("similarity index ")
+        || line.starts_with("rename from ")
+        || line.starts_with("rename to ")
+        || line.starts_with("--- ")
+        || line.starts_with("+++ ")
+    {
+        DiffLineKind::Header
+    } else if line.starts_with("@@") {
+        DiffLineKind::Hunk
+    } else if line.starts_with('+') {
+        DiffLineKind::Added
+    } else if line.starts_with('-') {
+        DiffLineKind::Removed
+    } else {
+        DiffLineKind::Plain
+    }
+}
+
+fn diff_line_style(kind: DiffLineKind) -> Style {
+    match kind {
+        DiffLineKind::Header => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        DiffLineKind::Hunk => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        DiffLineKind::Added => Style::default()
+            .fg(Color::Rgb(214, 255, 214))
+            .bg(Color::Rgb(21, 68, 42)),
+        DiffLineKind::Removed => Style::default()
+            .fg(Color::Rgb(255, 217, 217))
+            .bg(Color::Rgb(96, 34, 40)),
+        DiffLineKind::Plain => Style::default(),
+    }
+}
+
+fn pad_line_for_background(line: &str, content_width: usize) -> String {
+    let visible_width = line.chars().count();
+    if content_width == 0 || visible_width >= content_width {
+        return line.to_string();
+    }
+
+    format!("{line:<width$}", width = content_width)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_diff_metadata_before_add_remove_markers() {
+        assert_eq!(
+            classify_diff_line("+++ b/src/main.rs"),
+            DiffLineKind::Header
+        );
+        assert_eq!(
+            classify_diff_line("--- a/src/main.rs"),
+            DiffLineKind::Header
+        );
+        assert_eq!(classify_diff_line("@@ -1,2 +1,2 @@"), DiffLineKind::Hunk);
+        assert_eq!(classify_diff_line("+let x = 1;"), DiffLineKind::Added);
+        assert_eq!(classify_diff_line("-let x = 0;"), DiffLineKind::Removed);
+        assert_eq!(classify_diff_line(" context"), DiffLineKind::Plain);
+    }
+
+    #[test]
+    fn pads_added_and_removed_lines_for_full_width_highlighting() {
+        let text = styled_diff_text("+new\n-old", 8);
+
+        assert_eq!(text.lines.len(), 2);
+        assert_eq!(text.lines[0].spans[0].content.as_ref(), "+new    ");
+        assert_eq!(text.lines[1].spans[0].content.as_ref(), "-old    ");
+        assert_eq!(
+            text.lines[0].spans[0].style.bg,
+            Some(Color::Rgb(21, 68, 42))
+        );
+        assert_eq!(
+            text.lines[1].spans[0].style.bg,
+            Some(Color::Rgb(96, 34, 40))
+        );
+    }
 }

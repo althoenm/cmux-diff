@@ -1,6 +1,8 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use thiserror::Error;
@@ -89,11 +91,12 @@ impl GitClient {
     }
 
     fn has_commits(&self) -> Result<bool> {
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        command
             .current_dir(&self.repo_root)
-            .args(["rev-parse", "--verify", "HEAD"])
-            .output()
-            .context("failed to check whether HEAD exists")?;
+            .args(["rev-parse", "--verify", "HEAD"]);
+        let output =
+            command_output_with_retry(&mut command, "failed to check whether HEAD exists")?;
         Ok(output.status.success())
     }
 
@@ -131,7 +134,7 @@ where
         .env("GIT_PAGER", "cat");
     cmd.args(args);
 
-    let output = cmd.output().context("failed to run git command")?;
+    let output = command_output_with_retry(&mut cmd, "failed to run git command")?;
     let code = output.status.code().unwrap_or(-1);
     if !allowed.contains(&code) {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -147,6 +150,27 @@ where
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn command_output_with_retry(command: &mut Command, context: &str) -> Result<Output> {
+    let mut delay = Duration::from_millis(25);
+
+    for attempt in 0..4 {
+        match command.output() {
+            Ok(output) => return Ok(output),
+            Err(error) if is_retryable_spawn_error(&error) && attempt < 3 => {
+                thread::sleep(delay);
+                delay *= 2;
+            }
+            Err(error) => return Err(error).context(context.to_string()),
+        }
+    }
+
+    unreachable!("retry loop always returns or errors")
+}
+
+fn is_retryable_spawn_error(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock || error.raw_os_error() == Some(35)
 }
 
 fn empty_diff_fallback(output: String, fallback: &str) -> String {

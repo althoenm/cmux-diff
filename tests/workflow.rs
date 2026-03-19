@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use cmux_diff::app::AppState;
@@ -21,11 +23,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .current_dir(path)
-        .args(args.into_iter().map(|arg| arg.as_ref().to_string()))
-        .output()
-        .context("failed to run git in test repo")?;
+        .args(args.into_iter().map(|arg| arg.as_ref().to_string()));
+    let output =
+        command_output_with_retry(&mut command).context("failed to run git in test repo")?;
     if !output.status.success() {
         anyhow::bail!(
             "{}",
@@ -33,6 +36,23 @@ where
         );
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn command_output_with_retry(command: &mut Command) -> Result<Output> {
+    let mut delay = Duration::from_millis(25);
+
+    for attempt in 0..4 {
+        match command.output() {
+            Ok(output) => return Ok(output),
+            Err(error) if error.raw_os_error() == Some(35) && attempt < 3 => {
+                thread::sleep(delay);
+                delay *= 2;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    unreachable!("retry loop always returns or errors")
 }
 
 #[test]
